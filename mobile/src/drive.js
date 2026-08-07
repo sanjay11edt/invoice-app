@@ -1,4 +1,4 @@
-import { allInvoices, putInvoice, setting, setSetting } from './db.js';
+import { allInvoices, getOriginalPdf, putInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
@@ -88,14 +88,23 @@ export async function syncDrive(onProgress = () => {}) {
   const merged = merge(await allInvoices(true), remote);
   for (const row of merged) await putInvoice(row);
   const active = merged.filter(row => !row.deleted_at);
+  const missingOriginals = [];
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
     if (invoice.drive_pdf_updated_at === invoice.updated_at && invoice.drive_pdf_id) continue;
+    const original = await getOriginalPdf(invoice.id);
+    const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-');
+    if (!original && isHistorical) {
+      missingOriginals.push(invoice.id);
+      continue;
+    }
     onProgress(`Uploading PDF ${index + 1} of ${active.length}…`);
     const [year, month = '01'] = String(invoice.invoice_month || invoice.date || '').split('-');
     const yearFolder = await folder(year || 'Unknown', invoicesFolder);
     const monthFolder = await folder(new Date(Number(year) || 2000, Number(month) - 1, 1).toLocaleString('en', { month: 'long' }), yearFolder);
-    const result = await upload(pdfFilename(invoice), monthFolder, invoicePdf(invoice), invoice.drive_pdf_id);
+    const pdfBlob = original?.blob || invoicePdf(invoice);
+    const name = original?.name || pdfFilename(invoice);
+    const result = await upload(name, monthFolder, pdfBlob, invoice.drive_pdf_id);
     invoice.drive_pdf_id = result.id;
     invoice.drive_pdf_url = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
     invoice.drive_pdf_updated_at = invoice.updated_at;
@@ -105,5 +114,5 @@ export async function syncDrive(onProgress = () => {}) {
   const dataBlob = new Blob([JSON.stringify(finalRows, null, 2)], { type: 'application/json' });
   await upload(syncName, dataFolder, dataBlob, syncFile?.id);
   const completed = new Date().toISOString(); await setSetting('last_sync', completed);
-  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed };
+  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed, missingOriginals };
 }

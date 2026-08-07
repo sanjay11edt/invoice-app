@@ -1,8 +1,9 @@
 import './style.css';
 import './settings-button.css';
-import { allInvoices, deleteInvoice, getInvoice, importInvoices, saveInvoice, setting, setSetting } from './db.js';
+import { allInvoices, deleteInvoice, getInvoice, importInvoices, originalPdfIds, saveInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
 import { syncDrive } from './drive.js';
+import { importOriginalPdfFiles } from './pdf-import.js';
 
 let query = '';
 const app = document.querySelector('#app');
@@ -82,7 +83,9 @@ function bindRemove() { document.querySelectorAll('.remove').forEach(button => b
 
 async function renderSettings() {
   const clientId = await setting('google_client_id');
-  app.innerHTML = `<header><button class="back">‹</button><div><span class="eyebrow">APP</span><h1>Settings</h1></div></header><main><section class="form-card"><h2>Google Drive</h2><p class="help">Paste the Web OAuth Client ID created for this app in Google Cloud. It is safe to store on the device; never paste a client secret.</p><label>OAuth Client ID<input id="client-id" value="${esc(clientId)}" placeholder="…apps.googleusercontent.com"></label><button id="save-settings">Save settings</button></section><section class="form-card"><h2>Import desktop invoices</h2><p class="help">On the desktop only, select the existing invoices_data.json file once. Then press Sync to securely transfer the records and PDFs through your Google Drive.</p><label>Invoice data file<input id="import-file" type="file" accept="application/json,.json"></label></section><section class="form-card"><h2>How sync works</h2><p class="help">Sync merges invoices using their last modification time and uploads current PDFs to Invoice App / Invoices in your Google Drive.</p></section></main>`;
+  const invoiceRows = await allInvoices();
+  const pdfCount = (await originalPdfIds()).length;
+  app.innerHTML = `<header><button class="back">‹</button><div><span class="eyebrow">APP</span><h1>Settings</h1></div></header><main><section class="form-card"><h2>Google Drive</h2><p class="help">Paste the Web OAuth Client ID created for this app in Google Cloud. It is safe to store on the device; never paste a client secret.</p><label>OAuth Client ID<input id="client-id" value="${esc(clientId)}" placeholder="…apps.googleusercontent.com"></label><button id="save-settings">Save settings</button></section><section class="form-card"><h2>Import desktop invoices</h2><p class="help">First select invoices_data.json. Then select the laptop folder containing the original PDFs. Historical PDFs are preserved exactly and are never regenerated.</p><label>Invoice data file<input id="import-file" type="file" accept="application/json,.json"></label><label>Original PDF folder<input id="pdf-folder" type="file" accept="application/pdf,.pdf" webkitdirectory multiple></label><p class="help" id="pdf-status">${pdfCount} original PDFs imported for ${invoiceRows.length} invoices.</p></section><section class="form-card"><h2>How sync works</h2><p class="help">Sync merges invoices using their last modification time and uploads original PDFs to Invoice App / Invoices in your Google Drive. Missing historical PDFs are reported and skipped.</p></section></main>`;
   document.querySelector('.back').onclick = renderList;
   document.querySelector('#save-settings').onclick = async () => { await setSetting('google_client_id', document.querySelector('#client-id').value.trim()); alert('Settings saved'); renderList(); };
   document.querySelector('#import-file').onchange = async event => {
@@ -92,11 +95,23 @@ async function renderSettings() {
       await importInvoices(rows); alert(`Imported ${rows.length} invoices.`); renderList();
     } catch (error) { alert(`Import failed: ${error.message}`); }
   };
+  document.querySelector('#pdf-folder').onchange = async event => {
+    const status = document.querySelector('#pdf-status');
+    try {
+      status.textContent = 'Matching original PDFs…';
+      const result = await importOriginalPdfFiles(event.target.files, await allInvoices());
+      status.textContent = `${result.matches.length} original PDFs matched; ${result.unmatched.length} invoices still missing an original PDF.`;
+    } catch (error) { status.textContent = `PDF import failed: ${error.message}`; }
+  };
 }
 
 async function runSync() {
   const button = document.querySelector('#sync'); button.disabled = true;
-  try { const result = await syncDrive(message => button.textContent = message); alert(`Sync complete. ${result.invoices} invoices are up to date.`); }
+  try {
+    const result = await syncDrive(message => button.textContent = message);
+    const missing = result.missingOriginals.length ? ` ${result.missingOriginals.length} historical PDFs were missing and skipped.` : '';
+    alert(`Sync complete. ${result.invoices} invoices are up to date.${missing}`);
+  }
   catch (error) { alert(error.message); }
   renderList();
 }
