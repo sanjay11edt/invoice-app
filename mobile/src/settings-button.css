@@ -1,0 +1,9 @@
+.toolbar .settings-button {
+  white-space: nowrap;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  color: #111827;
+  padding: 0 14px;
+  font-weight: 700;
+}

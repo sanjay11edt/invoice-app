@@ -1,4 +1,5 @@
 import './style.css';
+import './settings-button.css';
 import { allInvoices, deleteInvoice, getInvoice, importInvoices, saveInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
 import { syncDrive } from './drive.js';
@@ -21,7 +22,7 @@ async function renderList() {
     <main>
       <section class="summary"><div><span>${rows.length}</span><small>Invoices</small></div><div><span>${money(total)}</span><small>Total</small></div></section>
       <div class="sync-status">${lastSync ? `Last synced ${new Date(lastSync).toLocaleString()}` : 'Not synced yet'} · Data stays on this device</div>
-      <div class="toolbar"><input id="search" type="search" value="${esc(query)}" placeholder="Search invoices…"><button id="settings" class="icon">⚙</button></div>
+      <div class="toolbar"><input id="search" type="search" value="${esc(query)}" placeholder="Search invoices…"><button id="settings" class="settings-button">⚙ Settings</button></div>
       <section class="list">${rows.length ? rows.sort((a,b) => String(b.invoice_month).localeCompare(String(a.invoice_month))).map(card).join('') : '<div class="empty">No invoices found</div>'}</section>
     </main>
     <button class="fab" id="new" aria-label="New invoice">＋</button>`;
