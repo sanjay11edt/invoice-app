@@ -1,6 +1,22 @@
 import { openDB } from 'idb';
 
 const dbPromise = openDB('invoice-manager', 2, {
+  blocked() {
+    const root = document.querySelector('#app');
+    if (root) {
+      root.innerHTML = `
+        <main class="shell">
+          <section class="panel">
+            <h1>Close the older Invoice Manager tab</h1>
+            <p>An older tab is preventing the local database from being updated.</p>
+            <p>Close every Invoice Manager tab or installed app window, then reopen this page.</p>
+          </section>
+        </main>`;
+    }
+  },
+  blocking() {
+    window.location.reload();
+  },
   upgrade(db) {
     if (!db.objectStoreNames.contains('invoices')) {
       const invoices = db.createObjectStore('invoices', { keyPath: 'id' });

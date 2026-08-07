@@ -1,120 +1,136 @@
-import './style.css';
-import './settings-button.css';
-import { allInvoices, deleteInvoice, getInvoice, importInvoices, originalPdfIds, saveInvoice, setting, setSetting } from './db.js';
+import '../../static/style.css';
+import './responsive.css';
+import { allInvoices, deleteInvoice, getInvoice, getOriginalPdf, importInvoices, originalPdfIds, saveInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
 import { syncDrive } from './drive.js';
 import { importOriginalPdfFiles } from './pdf-import.js';
 
-let query = '';
 const app = document.querySelector('#app');
-const money = value => `₹${Number(value || 0).toLocaleString('en-IN')}`;
-const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
+const money = value => `₹${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+let invoices = [], page = 'dashboard', editingId = null, modalId = null, sortKey = 'date', sortAsc = false;
 
-async function bootstrap() {
-  renderList();
-}
-
-async function renderList() {
-  const rows = (await allInvoices()).filter(row => [row.invoice_number, row.client, row.billing_name, row.invoice_month].join(' ').toLowerCase().includes(query));
-  const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0);
-  const lastSync = await setting('last_sync');
+function layout() {
   app.innerHTML = `
-    <header><div><span class="eyebrow">LOCAL-FIRST</span><h1>Invoices</h1></div><button class="sync" id="sync">↻ Sync</button></header>
-    <main>
-      <section class="summary"><div><span>${rows.length}</span><small>Invoices</small></div><div><span>${money(total)}</span><small>Total</small></div></section>
-      <div class="sync-status">${lastSync ? `Last synced ${new Date(lastSync).toLocaleString()}` : 'Not synced yet'} · Data stays on this device</div>
-      <div class="toolbar"><input id="search" type="search" value="${esc(query)}" placeholder="Search invoices…"><button id="settings" class="settings-button">⚙ Settings</button></div>
-      <section class="list">${rows.length ? rows.sort((a,b) => String(b.invoice_month).localeCompare(String(a.invoice_month))).map(card).join('') : '<div class="empty">No invoices found</div>'}</section>
-    </main>
-    <button class="fab" id="new" aria-label="New invoice">＋</button>`;
-  document.querySelector('#search').addEventListener('input', event => { query = event.target.value.toLowerCase(); renderList(); });
-  document.querySelector('#new').onclick = () => renderForm();
-  document.querySelector('#settings').onclick = renderSettings;
-  document.querySelector('#sync').onclick = runSync;
-  document.querySelectorAll('[data-id]').forEach(element => element.onclick = () => renderDetail(element.dataset.id));
+    <button class="mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button>
+    <div class="sidebar-scrim" id="sidebar-scrim"></div>
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand"><div class="brand-icon">MK</div><div class="brand-text"><span class="brand-name">InvoiceApp</span><span class="brand-sub">Monika Kumawat</span></div></div>
+      <nav class="sidebar-nav">
+        ${nav('dashboard','📊','Dashboard')}${nav('invoices','📋','All Invoices')}${nav('create','➕','New Invoice')}${nav('settings','⚙️','Settings')}
+      </nav>
+      <div class="sidebar-footer"><div class="sidebar-stats-mini"><div class="mini-stat"><span class="mini-label">Total Invoices</span><span class="mini-value" id="mini-count">—</span></div><div class="mini-stat"><span class="mini-label">Total Billed</span><span class="mini-value" id="mini-total">—</span></div></div></div>
+    </aside>
+    <main class="main" id="main"></main>
+    <div class="modal-overlay" id="modal-overlay"><div class="modal"><div class="modal-header"><div><h2 class="modal-title" id="modal-title"></h2><p class="modal-sub" id="modal-sub"></p></div><div class="modal-actions"><button class="btn btn-sm btn-accent" id="modal-pdf">📥 PDF</button><button class="btn btn-sm btn-outline" id="modal-edit">✏️ Edit</button><button class="btn-icon" id="modal-close">✕</button></div></div><div class="modal-body" id="modal-body"></div></div></div>
+    <div class="toast" id="toast"></div>`;
+  document.querySelectorAll('[data-page]').forEach(link => link.onclick = e => { e.preventDefault(); showPage(link.dataset.page); });
+  document.querySelector('#mobile-menu').onclick = toggleMenu;
+  document.querySelector('#sidebar-scrim').onclick = closeMenu;
+  document.querySelector('#modal-overlay').onclick = e => { if (e.target.id === 'modal-overlay') closeModal(); };
+  document.querySelector('#modal-close').onclick = closeModal;
 }
 
-function card(row) {
-  const month = /^\d{4}-\d{2}$/.test(row.invoice_month || '') ? new Date(`${row.invoice_month}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : 'No month';
-  return `<article class="card" data-id="${esc(row.id)}"><div class="card-top"><b>#${esc(row.invoice_number)}</b><span>${month}</span></div><h2>${esc(row.billing_name || row.client)}</h2><div class="card-bottom"><span>${esc(row.client)}</span><strong>${money(row.total)}</strong></div></article>`;
+function nav(name, icon, label) { return `<a href="#${name}" class="nav-item" id="nav-${name}" data-page="${name}"><span class="nav-icon">${icon}</span>${label}</a>`; }
+function toggleMenu() { document.body.classList.toggle('menu-open'); }
+function closeMenu() { document.body.classList.remove('menu-open'); }
+function toast(message, kind = 'success') { const el = document.querySelector('#toast'); el.textContent = message; el.className = `toast show ${kind}`; setTimeout(() => el.className = 'toast', 3000); }
+
+async function refresh() {
+  invoices = await allInvoices();
+  document.querySelector('#mini-count').textContent = invoices.length;
+  document.querySelector('#mini-total').textContent = money(invoices.reduce((s, x) => s + Number(x.total || 0), 0));
 }
 
-async function renderDetail(id) {
-  const row = await getInvoice(id); if (!row) return renderList();
-  app.innerHTML = `<header><button class="back">‹</button><div><span class="eyebrow">INVOICE</span><h1>#${esc(row.invoice_number)}</h1></div><button class="icon" id="edit">Edit</button></header>
-  <main><section class="detail"><div class="label">Billed to</div><h2>${esc(row.billing_name || row.client)}</h2><p>${esc(row.billing_address)}</p>
-  <div class="facts"><div><small>Invoice month</small><b>${esc(row.invoice_month)}</b></div><div><small>Invoice date</small><b>${esc(row.date)}</b></div></div>
-  <div class="line-items">${(row.items || []).map(item => `<div><span><b>${esc(item.description)}</b><small>${esc(item.period)}</small></span><strong>${money(item.amount)}</strong></div>`).join('')}</div>
-  <div class="grand-total"><span>Total</span><strong>${money(row.total)}</strong></div></section>
-  <div class="actions"><button id="pdf">Download PDF</button>${row.drive_pdf_url ? `<button id="drive" class="secondary">Open in Drive</button>` : ''}<button id="delete" class="danger">Delete</button></div></main>`;
-  document.querySelector('.back').onclick = renderList;
-  document.querySelector('#edit').onclick = () => renderForm(row);
-  document.querySelector('#pdf').onclick = () => { const link = document.createElement('a'); link.href = URL.createObjectURL(invoicePdf(row)); link.download = pdfFilename(row); link.click(); URL.revokeObjectURL(link.href); };
-  if (row.drive_pdf_url) document.querySelector('#drive').onclick = () => window.open(row.drive_pdf_url, '_blank');
-  document.querySelector('#delete').onclick = async () => { if (confirm('Delete this invoice? It will be removed from other devices on the next sync.')) { await deleteInvoice(id); renderList(); } };
+async function showPage(name) {
+  page = name; closeMenu();
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.toggle('active', x.dataset.page === name));
+  await refresh();
+  if (name === 'dashboard') renderDashboard();
+  if (name === 'invoices') renderInvoices();
+  if (name === 'create') renderForm();
+  if (name === 'settings') await renderSettings();
+  window.scrollTo(0, 0);
 }
 
-function newItem(item = {}) {
-  return `<div class="item"><input data-field="description" placeholder="Description" value="${esc(item.description)}"><input data-field="period" placeholder="01-Aug-2026 to 31-Aug-2026" value="${esc(item.period)}"><div><input data-field="rate" type="number" placeholder="Rate" value="${esc(item.rate)}"><input data-field="hours" type="number" placeholder="Hours" value="${esc(item.hours)}"><input data-field="amount" type="number" placeholder="Amount" value="${esc(item.amount)}"></div><button type="button" class="remove">Remove item</button></div>`;
+function financialYear(date = new Date()) { const y = date.getFullYear(), start = date.getMonth() < 3 ? y - 1 : y; return `${start}-${String(start + 1).slice(-2)}`; }
+function invoiceFY(row) { const value = row.invoice_month || row.date || '2000-01-01'; return financialYear(new Date(value.length === 7 ? `${value}-01T00:00:00` : value)); }
+function monthLabel(value) { return /^\d{4}-\d{2}$/.test(value || '') ? new Date(`${value}-01T00:00:00`).toLocaleDateString('en-IN', { month:'short', year:'numeric' }) : '—'; }
+function groupBy(rows, key) { return rows.reduce((out, row) => { const name = key(row) || 'Unknown'; out[name] = (out[name] || 0) + Number(row.total || 0); return out; }, {}); }
+function bars(groups) { const entries = Object.entries(groups).sort((a,b) => b[1]-a[1]), max = Math.max(...entries.map(x => x[1]), 1); return entries.length ? entries.map(([name,value]) => `<div class="bar-row"><span class="bar-label">${esc(name)}</span><div class="bar-track"><div class="bar-fill" style="width:${value/max*100}%"></div></div><strong>${money(value)}</strong></div>`).join('') : '<div class="empty-state">No invoice data</div>'; }
+
+function renderDashboard() {
+  const total = invoices.reduce((s,x) => s + Number(x.total || 0), 0), clients = new Set(invoices.map(x => x.client).filter(Boolean));
+  const year = String(new Date().getFullYear()), fy = financialYear();
+  const recent = [...invoices].sort((a,b) => String(b.date).localeCompare(String(a.date))).slice(0,5);
+  document.querySelector('#main').innerHTML = `<section class="page active"><div class="page-header"><div><h1 class="page-title">Dashboard</h1><p class="page-subtitle">Overview of all invoicing activity</p></div><button class="btn btn-primary sync-top">↻ Sync</button></div>
+    <div class="stats-grid">${stat('purple','📄','Total Invoices',invoices.length)}${stat('indigo','💰','Total Billed',money(total))}${stat('cyan','🏢','Clients',clients.size)}${stat('rose','📅','This Year',money(invoices.filter(x => String(x.invoice_month || x.date).startsWith(year)).reduce((s,x)=>s+Number(x.total||0),0)))}${stat('green','🧾',`FY ${fy}`,money(invoices.filter(x => invoiceFY(x)===fy).reduce((s,x)=>s+Number(x.total||0),0)))}</div>
+    <div class="charts-row"><div class="chart-card"><h3 class="chart-title">Revenue by Client</h3><div class="chart-area">${bars(groupBy(invoices,x=>x.client))}</div></div><div class="chart-card"><h3 class="chart-title">Yearly Revenue</h3><div class="chart-area">${bars(groupBy(invoices,x=>String(x.invoice_month||x.date).slice(0,4)))}</div></div></div>
+    <div class="recent-card"><div class="recent-header"><h3 class="chart-title">Recent Invoices</h3><a href="#invoices" class="view-all">View all →</a></div><div>${recent.map(recentRow).join('') || '<div class="empty-state">No invoices yet</div>'}</div></div></section>`;
+  document.querySelector('.sync-top').onclick = runSync;
+  document.querySelector('.view-all').onclick = e => { e.preventDefault(); showPage('invoices'); };
+  bindOpen();
 }
+function stat(color, icon, label, value) { return `<div class="stat-card ${color}"><div class="stat-icon">${icon}</div><div class="stat-body"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div></div>`; }
+function recentRow(row) { return `<div class="recent-row open-invoice" data-id="${esc(row.id)}"><div class="invoice-num">#${esc(row.invoice_number)}</div><div class="recent-client">${esc(row.billing_name || row.client)}</div><div class="recent-date">${monthLabel(row.invoice_month)}</div><div class="recent-amount">${money(row.total)}</div></div>`; }
 
-function renderForm(row = {}) {
-  const today = new Date().toISOString().slice(0, 10);
-  app.innerHTML = `<header><button class="back">‹</button><div><span class="eyebrow">${row.id ? 'EDIT' : 'NEW'}</span><h1>Invoice</h1></div><button id="save" class="sync">Save</button></header>
-  <main><form id="form"><section class="form-card"><label>Invoice number<input name="invoice_number" required value="${esc(row.invoice_number)}"></label><label>Invoice date<input name="date" type="date" required value="${esc(row.date || today)}"></label><label>Client<input name="client" required value="${esc(row.client)}"></label><label>Billed to<input name="billing_name" required value="${esc(row.billing_name)}"></label><label>Address<textarea name="billing_address">${esc(row.billing_address)}</textarea></label></section>
-  <div class="section-title"><h2>Line items</h2><button type="button" id="add">＋ Add</button></div><section id="items">${(row.items?.length ? row.items : [{}]).map(newItem).join('')}</section>
-  <section class="form-card"><h2>Payment details</h2><label>Bank<input name="bank" value="${esc(row.bank)}"></label><label>Account holder<input name="account_name" value="${esc(row.account_name)}"></label><label>Account number<input name="account_number" value="${esc(row.account_number)}"></label><label>IFSC<input name="ifsc" value="${esc(row.ifsc)}"></label></section></form></main>`;
-  document.querySelector('.back').onclick = () => row.id ? renderDetail(row.id) : renderList();
-  document.querySelector('#add').onclick = () => { document.querySelector('#items').insertAdjacentHTML('beforeend', newItem()); bindRemove(); };
-  bindRemove();
-  document.querySelector('#save').onclick = async () => {
-    const form = document.querySelector('#form'); if (!form.reportValidity()) return;
-    const values = Object.fromEntries(new FormData(form));
-    const items = [...document.querySelectorAll('.item')].map(item => Object.fromEntries([...item.querySelectorAll('[data-field]')].map(input => [input.dataset.field, input.value]))).map(item => ({ ...item, rate: Number(item.rate), hours: Number(item.hours), amount: Number(item.amount) }));
-    const period = items.map(item => item.period).join(' ').match(/\b\d{1,2}-([A-Za-z]{3,9})-(\d{4})\b/);
-    const months = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-    const invoice_month = period ? `${period[2]}-${String(months.indexOf(period[1].slice(0,3).toLowerCase()) + 1).padStart(2,'0')}` : '';
-    const saved = await saveInvoice({ ...row, ...values, items, invoice_month, total: items.reduce((sum, item) => sum + item.amount, 0) });
-    renderDetail(saved.id);
-  };
+function renderInvoices() {
+  const clients = [...new Set(invoices.map(x=>x.client).filter(Boolean))].sort(), years = [...new Set(invoices.map(x=>String(x.invoice_month||x.date).slice(0,4)).filter(Boolean))].sort().reverse(), fys = [...new Set(invoices.map(invoiceFY))].sort().reverse();
+  document.querySelector('#main').innerHTML = `<section class="page active"><div class="page-header"><div><h1 class="page-title">All Invoices</h1><p class="page-subtitle">Browse and manage existing invoices</p></div><div class="header-actions"><div class="search-box"><span class="search-icon">🔍</span><input id="search-input" placeholder="Search invoices…"></div><select id="client-filter" class="filter-select"><option value="">All Clients</option>${options(clients)}</select><select id="year-filter" class="filter-select"><option value="">All Calendar Years</option>${options(years)}</select><select id="fy-filter" class="filter-select"><option value="">All Financial Years</option>${options(fys)}</select></div></div>
+    <div class="invoice-summary-grid"><div class="invoice-summary-card"><div class="invoice-summary-label">Showing</div><div class="invoice-summary-value" id="summary-count">0</div></div><div class="invoice-summary-card total"><div class="invoice-summary-label">Total Amount</div><div class="invoice-summary-value" id="summary-total">₹0</div></div><div class="invoice-summary-card"><div class="invoice-summary-label">Clients</div><div class="invoice-summary-value" id="summary-clients">0</div></div><div class="invoice-summary-card"><div class="invoice-summary-label">Average</div><div class="invoice-summary-value" id="summary-average">₹0</div></div></div>
+    <div class="invoice-table-wrap"><table class="invoice-table"><thead><tr>${th('invoice_number','Invoice #')}${th('invoice_month','Invoice Month')}${th('client','Client')}${th('billing_name','Billed To')}${th('date','Date')}${th('total','Amount')}<th>Actions</th></tr></thead><tbody id="invoice-tbody"></tbody></table></div></section>`;
+  ['search-input','client-filter','year-filter','fy-filter'].forEach(id => document.querySelector(`#${id}`).oninput = filterInvoices);
+  document.querySelectorAll('[data-sort]').forEach(x => x.onclick = () => { sortAsc = sortKey === x.dataset.sort ? !sortAsc : true; sortKey = x.dataset.sort; filterInvoices(); });
+  filterInvoices();
 }
-
-function bindRemove() { document.querySelectorAll('.remove').forEach(button => button.onclick = () => button.closest('.item').remove()); }
-
-async function renderSettings() {
-  const clientId = await setting('google_client_id');
-  const invoiceRows = await allInvoices();
-  const pdfCount = (await originalPdfIds()).length;
-  app.innerHTML = `<header><button class="back">‹</button><div><span class="eyebrow">APP</span><h1>Settings</h1></div></header><main><section class="form-card"><h2>Google Drive</h2><p class="help">Paste the Web OAuth Client ID created for this app in Google Cloud. It is safe to store on the device; never paste a client secret.</p><label>OAuth Client ID<input id="client-id" value="${esc(clientId)}" placeholder="…apps.googleusercontent.com"></label><button id="save-settings">Save settings</button></section><section class="form-card"><h2>Import desktop invoices</h2><p class="help">First select invoices_data.json. Then select the laptop folder containing the original PDFs. Historical PDFs are preserved exactly and are never regenerated.</p><label>Invoice data file<input id="import-file" type="file" accept="application/json,.json"></label><label>Original PDF folder<input id="pdf-folder" type="file" accept="application/pdf,.pdf" webkitdirectory multiple></label><p class="help" id="pdf-status">${pdfCount} original PDFs imported for ${invoiceRows.length} invoices.</p></section><section class="form-card"><h2>How sync works</h2><p class="help">Sync merges invoices using their last modification time and uploads original PDFs to Invoice App / Invoices in your Google Drive. Missing historical PDFs are reported and skipped.</p></section></main>`;
-  document.querySelector('.back').onclick = renderList;
-  document.querySelector('#save-settings').onclick = async () => { await setSetting('google_client_id', document.querySelector('#client-id').value.trim()); alert('Settings saved'); renderList(); };
-  document.querySelector('#import-file').onchange = async event => {
-    try {
-      const rows = JSON.parse(await event.target.files[0].text());
-      if (!Array.isArray(rows)) throw new Error('The selected file is not an invoice list.');
-      await importInvoices(rows); alert(`Imported ${rows.length} invoices.`); renderList();
-    } catch (error) { alert(`Import failed: ${error.message}`); }
-  };
-  document.querySelector('#pdf-folder').onchange = async event => {
-    const status = document.querySelector('#pdf-status');
-    try {
-      status.textContent = 'Matching original PDFs…';
-      const result = await importOriginalPdfFiles(event.target.files, await allInvoices());
-      status.textContent = `${result.matches.length} original PDFs matched; ${result.unmatched.length} invoices still missing an original PDF.`;
-    } catch (error) { status.textContent = `PDF import failed: ${error.message}`; }
-  };
+function options(values) { return values.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join(''); }
+function th(key,label) { return `<th data-sort="${key}">${label} <span class="sort-icon">↕</span></th>`; }
+function filterInvoices() {
+  const q = document.querySelector('#search-input').value.toLowerCase(), client = document.querySelector('#client-filter').value, year = document.querySelector('#year-filter').value, fy = document.querySelector('#fy-filter').value;
+  let rows = invoices.filter(x => (!q || [x.invoice_number,x.client,x.billing_name,x.invoice_month].join(' ').toLowerCase().includes(q)) && (!client || x.client===client) && (!year || String(x.invoice_month||x.date).startsWith(year)) && (!fy || invoiceFY(x)===fy));
+  rows.sort((a,b) => (String(a[sortKey]??'').localeCompare(String(b[sortKey]??''),undefined,{numeric:true})) * (sortAsc?1:-1));
+  document.querySelector('#invoice-tbody').innerHTML = rows.map(x=>`<tr><td><span class="invoice-number-link open-invoice" data-id="${esc(x.id)}">#${esc(x.invoice_number)}</span></td><td>${monthLabel(x.invoice_month)}</td><td><span class="client-badge">${esc(x.client)}</span></td><td>${esc(x.billing_name)}</td><td>${esc(x.date)}</td><td class="amount-cell">${money(x.total)}</td><td><button class="btn btn-sm btn-outline open-invoice" data-id="${esc(x.id)}">View</button></td></tr>`).join('') || '<tr><td colspan="7" class="empty-state">No invoices found</td></tr>';
+  const total = rows.reduce((s,x)=>s+Number(x.total||0),0); document.querySelector('#summary-count').textContent=rows.length; document.querySelector('#summary-total').textContent=money(total); document.querySelector('#summary-clients').textContent=new Set(rows.map(x=>x.client)).size; document.querySelector('#summary-average').textContent=money(rows.length?total/rows.length:0); bindOpen();
 }
+function bindOpen() { document.querySelectorAll('.open-invoice').forEach(x => x.onclick = () => openModal(x.dataset.id)); }
 
-async function runSync() {
-  const button = document.querySelector('#sync'); button.disabled = true;
-  try {
-    const result = await syncDrive(message => button.textContent = message);
-    const missing = result.missingOriginals.length ? ` ${result.missingOriginals.length} historical PDFs were missing and skipped.` : '';
-    alert(`Sync complete. ${result.invoices} invoices are up to date.${missing}`);
+async function openModal(id) {
+  const row = await getInvoice(id); if (!row) return; modalId=id;
+  document.querySelector('#modal-title').textContent=`Invoice #${row.invoice_number}`; document.querySelector('#modal-sub').textContent=`${row.date || ''} · ${monthLabel(row.invoice_month)}`;
+  document.querySelector('#modal-body').innerHTML=`<div class="invoice-detail-grid"><div><div class="detail-label">BILLED TO</div><h3>${esc(row.billing_name||row.client)}</h3><p>${esc(row.billing_address||'')}</p><p>${esc(row.billing_phone||'')}</p></div><div><div class="detail-label">PAYMENT DETAILS</div><p><strong>${esc(row.bank||'')}</strong><br>${esc(row.account_name||'')}<br>${esc(row.account_number||'')}<br>${esc(row.ifsc||'')}</p></div></div><table class="detail-items"><thead><tr><th>Description</th><th>Period</th><th>Rate</th><th>Hours</th><th>Amount</th></tr></thead><tbody>${(row.items||[]).map(i=>`<tr><td>${esc(i.description)}</td><td>${esc(i.period)}</td><td>${money(i.rate)}</td><td>${esc(i.hours)}</td><td>${money(i.amount)}</td></tr>`).join('')}</tbody></table><div class="detail-total"><span>Total</span><strong>${money(row.total)}</strong></div><div class="detail-actions">${row.drive_pdf_url?'<button class="btn btn-outline" id="open-drive">Open original in Drive</button>':''}<button class="btn danger-btn" id="delete-invoice">Delete Invoice</button></div>`;
+  document.querySelector('#modal-overlay').classList.add('open');
+  document.querySelector('#modal-pdf').onclick=()=>downloadPdf(row); document.querySelector('#modal-edit').onclick=()=>{closeModal();renderForm(row);};
+  if(row.drive_pdf_url) document.querySelector('#open-drive').onclick=()=>window.open(row.drive_pdf_url,'_blank');
+  document.querySelector('#delete-invoice').onclick=async()=>{if(confirm('Delete this invoice?')){await deleteInvoice(id);closeModal();await showPage(page);}};
+}
+function closeModal(){document.querySelector('#modal-overlay').classList.remove('open');modalId=null;}
+async function downloadPdf(row){
+  const original = await getOriginalPdf(row.id);
+  const historical = row.source === 'legacy' || String(row.id).startsWith('legacy-');
+  if (historical && !original) {
+    toast('Original PDF is not imported for this historical invoice. Add it in Settings.', 'error');
+    return;
   }
-  catch (error) { alert(error.message); }
-  renderList();
+  const blob = original?.blob || invoicePdf(row), url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = original?.name || pdfFilename(row); a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function itemRow(item={}) { return `<div class="item-row"><input data-field="description" placeholder="Description" value="${esc(item.description)}"><input data-field="period" placeholder="01-Aug-2026 to 31-Aug-2026" value="${esc(item.period)}"><input data-field="rate" type="number" step="any" placeholder="Rate" value="${esc(item.rate)}"><input data-field="hours" type="number" step="any" placeholder="Hours" value="${esc(item.hours)}"><input data-field="amount" type="number" step="any" placeholder="Amount" value="${esc(item.amount)}"><button type="button" class="remove-item">✕</button></div>`; }
+function renderForm(row={}) {
+  editingId=row.id||null; const today=new Date().toISOString().slice(0,10);
+  document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.page==='create'));
+  document.querySelector('#main').innerHTML=`<section class="page active"><div class="page-header"><div><h1 class="page-title">${editingId?'Edit':'New'} Invoice</h1><p class="page-subtitle">Fill in the details to generate an invoice</p></div><button class="btn btn-outline" id="reset-form">Reset</button></div><form id="invoice-form"><div class="form-grid"><div class="form-section"><h3 class="form-section-title">Invoice Details</h3><div class="form-row"><div class="field"><label>Invoice Number</label><input name="invoice_number" required value="${esc(row.invoice_number)}"></div><div class="field"><label>Date</label><input name="date" type="date" required value="${esc(row.date||today)}"></div><div class="field"><label>Invoice Month</label><input name="invoice_month" type="month" readonly value="${esc(row.invoice_month)}"></div></div><h3 class="form-section-title bill-to-title">Bill To</h3><div class="form-row"><div class="field"><label>Client</label><input name="client" required value="${esc(row.client)}"></div><div class="field"><label>Company / Name</label><input name="billing_name" required value="${esc(row.billing_name)}"></div></div><div class="form-row"><div class="field"><label>Phone</label><input name="billing_phone" value="${esc(row.billing_phone)}"></div><div class="field"><label>Address</label><textarea name="billing_address" rows="2">${esc(row.billing_address)}</textarea></div></div></div><div class="form-section"><h3 class="form-section-title">Bank Details</h3><div class="field"><label>Bank Name</label><input name="bank" value="${esc(row.bank||'State Bank Of India')}"></div><div class="form-row"><div class="field"><label>Account Holder</label><input name="account_name" value="${esc(row.account_name||'Monika Kumawat')}"></div><div class="field"><label>Account Number</label><input name="account_number" value="${esc(row.account_number||'61196677074')}"></div></div><div class="field"><label>IFSC Code</label><input name="ifsc" value="${esc(row.ifsc||'SBIN0011305')}"></div><div class="preview-box"><div class="preview-label">TOTAL</div><div class="preview-amount" id="preview-amount">${money(row.total)}</div><div class="preview-words">Calculated from line items</div></div></div></div><div class="form-section line-section"><div class="section-row"><h3 class="form-section-title">Line Items</h3><button type="button" class="btn btn-sm btn-accent" id="add-item">+ Add Item</button></div><div class="items-header"><span>Description</span><span>Period</span><span>Rate / Hr</span><span>Hours</span><span>Amount</span><span></span></div><div id="items-container">${(row.items?.length?row.items:[{}]).map(itemRow).join('')}</div></div><div class="form-actions"><button class="btn btn-primary" type="submit">💾 Save Invoice</button>${editingId?'<button class="btn btn-outline" type="button" id="cancel-edit">Cancel</button>':''}</div></form></section>`;
+  document.querySelector('#reset-form').onclick=()=>renderForm(); document.querySelector('#add-item').onclick=()=>{document.querySelector('#items-container').insertAdjacentHTML('beforeend',itemRow());bindItems();}; if(editingId)document.querySelector('#cancel-edit').onclick=()=>showPage('invoices'); bindItems(); document.querySelector('#invoice-form').onsubmit=saveForm;
+}
+function bindItems(){document.querySelectorAll('.remove-item').forEach(x=>x.onclick=()=>{x.closest('.item-row').remove();calculateTotal();});document.querySelectorAll('.item-row input').forEach(x=>x.oninput=()=>{if(['rate','hours'].includes(x.dataset.field)){const row=x.closest('.item-row'),rate=Number(row.querySelector('[data-field=rate]').value),hours=Number(row.querySelector('[data-field=hours]').value);row.querySelector('[data-field=amount]').value=(rate*hours)||'';}deriveMonth();calculateTotal();});}
+function deriveMonth(){const period=[...document.querySelectorAll('[data-field=period]')].map(x=>x.value).join(' '),m=period.match(/\b\d{1,2}[-\s/]([A-Za-z]{3,9}|\d{1,2})[-\s/](\d{4})\b/);if(!m)return;const names=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'],month=/^\d+$/.test(m[1])?Number(m[1]):names.indexOf(m[1].slice(0,3).toLowerCase())+1;if(month>0)document.querySelector('[name=invoice_month]').value=`${m[2]}-${String(month).padStart(2,'0')}`;}
+function calculateTotal(){const total=[...document.querySelectorAll('[data-field=amount]')].reduce((s,x)=>s+Number(x.value||0),0);document.querySelector('#preview-amount').textContent=money(total);return total;}
+async function saveForm(e){e.preventDefault();const form=e.currentTarget;if(!form.reportValidity())return;const values=Object.fromEntries(new FormData(form)),items=[...document.querySelectorAll('.item-row')].map(r=>Object.fromEntries([...r.querySelectorAll('[data-field]')].map(x=>[x.dataset.field,['rate','hours','amount'].includes(x.dataset.field)?Number(x.value||0):x.value])));const old=editingId?await getInvoice(editingId):{};await saveInvoice({...old,...values,items,total:items.reduce((s,x)=>s+x.amount,0)});toast(editingId?'Invoice updated':'Invoice saved');showPage('invoices');}
+
+async function renderSettings(){const clientId=await setting('google_client_id'),lastSync=await setting('last_sync'),pdfCount=(await originalPdfIds()).length;document.querySelector('#main').innerHTML=`<section class="page active"><div class="page-header"><div><h1 class="page-title">Settings</h1><p class="page-subtitle">Google Drive backup and desktop data import</p></div></div><div class="form-grid settings-grid"><div class="form-section"><h3 class="form-section-title">Google Drive</h3><p class="setting-help">Your invoice data and original PDFs sync to a private Invoice App folder in your Google Drive.</p><div class="field"><label>OAuth Client ID</label><input id="client-id" value="${esc(clientId)}" placeholder="…apps.googleusercontent.com"></div><button class="btn btn-primary" id="save-settings">Save Settings</button><button class="btn btn-accent" id="settings-sync">↻ Authorize & Sync</button><p class="setting-help">${lastSync?`Last synced ${new Date(lastSync).toLocaleString()}`:'Not synced yet'}</p></div><div class="form-section"><h3 class="form-section-title">Import Existing Invoices</h3><p class="setting-help">Import the desktop JSON first, then select the folder containing your original invoice PDFs.</p><div class="field"><label>Invoice data JSON</label><input id="import-file" type="file" accept=".json,application/json"></div><div class="field"><label>Original PDF folder</label><input id="pdf-folder" type="file" accept=".pdf,application/pdf" webkitdirectory multiple></div><p class="setting-help" id="pdf-status">${pdfCount} original PDFs stored locally for ${invoices.length} invoices.</p></div></div></section>`;document.querySelector('#save-settings').onclick=async()=>{await setSetting('google_client_id',document.querySelector('#client-id').value.trim());toast('Settings saved');};document.querySelector('#settings-sync').onclick=runSync;document.querySelector('#import-file').onchange=async e=>{try{const rows=JSON.parse(await e.target.files[0].text());if(!Array.isArray(rows))throw Error('File does not contain an invoice list');await importInvoices(rows);await refresh();toast(`Imported ${rows.length} invoices`);await renderSettings();}catch(err){toast(`Import failed: ${err.message}`,'error');}};document.querySelector('#pdf-folder').onchange=async e=>{const status=document.querySelector('#pdf-status');try{status.textContent='Matching original PDFs…';const result=await importOriginalPdfFiles(e.target.files,await allInvoices());status.textContent=`${result.matches.length} PDFs matched. ${result.unmatched.length} invoices are still missing an original PDF.`;}catch(err){status.textContent=`PDF import failed: ${err.message}`;}};}
+
+async function runSync(){const button=document.activeElement;const old=button?.textContent;if(button?.tagName==='BUTTON'){button.disabled=true;button.textContent='Connecting…';}try{const result=await syncDrive(message=>{if(button?.tagName==='BUTTON')button.textContent=message;});toast(`Sync complete: ${result.invoices} invoices${result.missingOriginals.length?`, ${result.missingOriginals.length} PDFs missing`:''}`);await showPage(page);}catch(err){toast(err.message,'error');}finally{if(button?.tagName==='BUTTON'){button.disabled=false;button.textContent=old;}}}
+
+async function bootstrap(){try{layout();await showPage(location.hash.slice(1)||'dashboard');window.addEventListener('hashchange',()=>showPage(location.hash.slice(1)||'dashboard'));}catch(err){console.error(err);app.innerHTML=`<main class="startup-error"><h1>Invoice Manager could not start</h1><p>${esc(err.message)}</p><p>Close other Invoice Manager tabs and refresh.</p></main>`;}}
 bootstrap();
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));

@@ -16,7 +16,8 @@ mobile/dist/
 app.py
 pdf_gen.py
 run.bat
-static/
+static/*
+!static/style.css
 templates/
 README.md
 HANDOFF_PROMPT.md
