@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.log
+client_secret*.json
+token.json
+email_config.json
+invoices_data.json
+*.pdf
+mobile/node_modules/
+mobile/dist/
+.env
+.env.*
+!.env.example
+
+# Desktop-only application stays local and is never published.
+app.py
+pdf_gen.py
+run.bat
+static/
+templates/
+README.md

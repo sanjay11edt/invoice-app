@@ -1,0 +1,10 @@
+{
+  "name": "Invoice Manager",
+  "short_name": "Invoices",
+  "description": "Offline invoice manager with manual Google Drive sync",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#111827",
+  "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
