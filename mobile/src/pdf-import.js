@@ -1,4 +1,4 @@
-import { putOriginalPdf } from './db.js';
+import { putInvoice, putOriginalPdf } from './db.js';
 
 const normalize = value => String(value || '')
   .replace(/\\/g, '/')
@@ -41,6 +41,14 @@ export function matchOriginalPdfFiles(files, invoices) {
 export async function importOriginalPdfFiles(fileList, invoices) {
   const pdfFiles = [...fileList].filter(file => file.name.toLowerCase().endsWith('.pdf'));
   const result = matchOriginalPdfFiles(pdfFiles, invoices);
-  for (const { invoice, file } of result.matches) await putOriginalPdf(invoice.id, file);
+  for (const { invoice, file } of result.matches) {
+    await putOriginalPdf(invoice.id, file);
+    await putInvoice({
+      ...invoice,
+      source: invoice.source || 'legacy',
+      updated_at: new Date().toISOString(),
+      drive_pdf_updated_at: null
+    });
+  }
   return result;
 }
