@@ -106,7 +106,7 @@ async function openModal(id) {
 function closeModal(){document.querySelector('#modal-overlay').classList.remove('open');modalId=null;}
 async function downloadPdf(row){
   const original = await getOriginalPdf(row.id);
-  const historical = row.source === 'legacy' || String(row.id).startsWith('legacy-');
+  const historical = row.source === 'legacy' || String(row.id).startsWith('legacy-') || Boolean(row.path) || /\.xlsx$/i.test(row.file || '');
   if (historical && !original) {
     if (row.drive_pdf_url) {
       window.open(row.drive_pdf_url, '_blank');

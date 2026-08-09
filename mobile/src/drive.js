@@ -68,7 +68,22 @@ function merge(local, remote) {
   const rows = new Map();
   [...remote, ...local].forEach(row => {
     const current = rows.get(row.id);
-    if (!current || String(row.updated_at) > String(current.updated_at)) rows.set(row.id, row);
+    if (!current) {
+      rows.set(row.id, row);
+      return;
+    }
+    const newer = String(row.updated_at) > String(current.updated_at) ? row : current;
+    const older = newer === row ? current : row;
+    rows.set(row.id, {
+      ...older,
+      ...newer,
+      path: newer.path || older.path,
+      file: newer.file || older.file,
+      source: newer.source === 'legacy' || older.source === 'legacy' ? 'legacy' : newer.source,
+      drive_pdf_id: newer.drive_pdf_id || older.drive_pdf_id,
+      drive_pdf_url: newer.drive_pdf_url || older.drive_pdf_url,
+      drive_pdf_updated_at: newer.drive_pdf_updated_at || older.drive_pdf_updated_at
+    });
   });
   return [...rows.values()];
 }
@@ -95,7 +110,7 @@ export async function syncDrive(onProgress = () => {}) {
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
     const original = await getOriginalPdf(invoice.id);
-    const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-');
+    const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-') || Boolean(invoice.path) || /\.xlsx$/i.test(invoice.file || '');
     if (!original && isHistorical) {
       missingOriginals.push(invoice.id);
       continue;
