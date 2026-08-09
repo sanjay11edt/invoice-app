@@ -63,6 +63,17 @@ async function upload(name, parentId, blob, fileId = '') {
   return response.json();
 }
 
+async function fileExists(fileId) {
+  if (!fileId) return false;
+  const response = await fetch(`${API}/files/${encodeURIComponent(fileId)}?fields=id,trashed`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || 'Could not verify a Google Drive PDF');
+  const file = await response.json();
+  return Boolean(file.id && !file.trashed);
+}
+
 function merge(local, remote) {
   const rows = new Map();
   [...remote, ...local].forEach(row => {
@@ -89,9 +100,20 @@ export async function syncDrive(onProgress = () => {}) {
   for (const row of merged) await putInvoice(row);
   const active = merged.filter(row => !row.deleted_at);
   const missingOriginals = [];
+  let uploadedPdfs = 0;
+  let reusedPdfs = 0;
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
-    if (invoice.drive_pdf_updated_at === invoice.updated_at && invoice.drive_pdf_id) continue;
+    if (invoice.drive_pdf_updated_at === invoice.updated_at && invoice.drive_pdf_id) {
+      onProgress(`Verifying PDF ${index + 1} of ${active.length}…`);
+      if (await fileExists(invoice.drive_pdf_id)) {
+        reusedPdfs++;
+        continue;
+      }
+      invoice.drive_pdf_id = '';
+      invoice.drive_pdf_url = '';
+      invoice.drive_pdf_updated_at = null;
+    }
     const original = await getOriginalPdf(invoice.id);
     const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-');
     if (!original && isHistorical) {
@@ -109,10 +131,11 @@ export async function syncDrive(onProgress = () => {}) {
     invoice.drive_pdf_url = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
     invoice.drive_pdf_updated_at = invoice.updated_at;
     await putInvoice(invoice);
+    uploadedPdfs++;
   }
   const finalRows = await allInvoices(true);
   const dataBlob = new Blob([JSON.stringify(finalRows, null, 2)], { type: 'application/json' });
   await upload(syncName, dataFolder, dataBlob, syncFile?.id);
   const completed = new Date().toISOString(); await setSetting('last_sync', completed);
-  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed, missingOriginals };
+  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed, missingOriginals, uploadedPdfs, reusedPdfs };
 }
