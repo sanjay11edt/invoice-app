@@ -105,15 +105,18 @@ export async function syncDrive(onProgress = () => {}) {
   let reusedPdfs = 0;
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
-    if (invoice.drive_pdf_updated_at === invoice.updated_at && invoice.drive_pdf_id) {
+    if (invoice.drive_pdf_id) {
       onProgress(`Verifying PDF ${index + 1} of ${active.length}…`);
       if (await fileExists(invoice.drive_pdf_id)) {
-        reusedPdfs++;
-        continue;
+        if (invoice.drive_pdf_updated_at === invoice.updated_at) {
+          reusedPdfs++;
+          continue;
+        }
+      } else {
+        invoice.drive_pdf_id = '';
+        invoice.drive_pdf_url = '';
+        invoice.drive_pdf_updated_at = null;
       }
-      invoice.drive_pdf_id = '';
-      invoice.drive_pdf_url = '';
-      invoice.drive_pdf_updated_at = null;
     }
     const original = await getOriginalPdf(invoice.id);
     const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-');
