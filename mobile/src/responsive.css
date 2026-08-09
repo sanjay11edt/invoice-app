@@ -25,7 +25,8 @@ body { min-width: 0; }
 .detail-total strong { color:var(--accent);font-size:1.5rem; }
 .detail-actions { display:flex;gap:.75rem;justify-content:flex-end;border-top:1px solid var(--border);padding-top:1rem; }
 .danger-btn { background:rgba(244,63,94,.1);color:var(--rose);border:1px solid rgba(244,63,94,.25); }
-.startup-error { max-width:600px;margin:5rem auto;padding:2rem;color:#fff; }
+.startup-loading,.startup-error { max-width:600px;margin:3rem auto;padding:2rem;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text); }
+.startup-loading p,.startup-error p { color:var(--muted);line-height:1.6;margin:.75rem 0 1.25rem; }
 
 @media (max-width:900px) {
   body::before { content:"";position:fixed;z-index:1000;inset:0 0 auto 0;height:calc(64px + env(safe-area-inset-top));background:rgba(15,18,32,.96);border-bottom:1px solid var(--border);backdrop-filter:blur(12px); }

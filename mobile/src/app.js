@@ -21,7 +21,7 @@ function layout() {
       </nav>
       <div class="sidebar-footer"><div class="sidebar-stats-mini"><div class="mini-stat"><span class="mini-label">Total Invoices</span><span class="mini-value" id="mini-count">—</span></div><div class="mini-stat"><span class="mini-label">Total Billed</span><span class="mini-value" id="mini-total">—</span></div></div></div>
     </aside>
-    <main class="main" id="main"></main>
+    <main class="main" id="main"><section class="page active"><div class="startup-loading"><h1>Invoice Manager</h1><p>Opening your local invoices…</p></div></section></main>
     <div class="modal-overlay" id="modal-overlay"><div class="modal"><div class="modal-header"><div><h2 class="modal-title" id="modal-title"></h2><p class="modal-sub" id="modal-sub"></p></div><div class="modal-actions"><button class="btn btn-sm btn-accent" id="modal-pdf">📥 PDF</button><button class="btn btn-sm btn-outline" id="modal-edit">✏️ Edit</button><button class="btn-icon" id="modal-close">✕</button></div></div><div class="modal-body" id="modal-body"></div></div></div>
     <div class="toast" id="toast"></div>`;
   document.querySelectorAll('[data-page]').forEach(link => link.onclick = e => { e.preventDefault(); showPage(link.dataset.page); });
@@ -135,6 +135,21 @@ async function renderSettings(){const clientId=await setting('google_client_id')
 
 async function runSync(){const button=document.activeElement;const old=button?.textContent;if(button?.tagName==='BUTTON'){button.disabled=true;button.textContent='Connecting…';}try{const result=await syncDrive(message=>{if(button?.tagName==='BUTTON')button.textContent=message;});toast(`Sync complete: ${result.invoices} invoices${result.missingOriginals.length?`, ${result.missingOriginals.length} PDFs missing`:''}`);await showPage(page);}catch(err){toast(err.message,'error');}finally{if(button?.tagName==='BUTTON'){button.disabled=false;button.textContent=old;}}}
 
-async function bootstrap(){try{layout();await showPage(location.hash.slice(1)||'dashboard');window.addEventListener('hashchange',()=>showPage(location.hash.slice(1)||'dashboard'));}catch(err){console.error(err);app.innerHTML=`<main class="startup-error"><h1>Invoice Manager could not start</h1><p>${esc(err.message)}</p><p>Close other Invoice Manager tabs and refresh.</p></main>`;}}
+async function bootstrap(){
+  try {
+    layout();
+    const startup = showPage(location.hash.slice(1) || 'dashboard');
+    await Promise.race([
+      startup,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('The local invoice database is taking too long to open.')), 8000))
+    ]);
+    window.addEventListener('hashchange', () => showPage(location.hash.slice(1) || 'dashboard'));
+  } catch(err) {
+    console.error(err);
+    const main = document.querySelector('#main') || app;
+    main.innerHTML=`<section class="page active"><div class="startup-error"><h1>Invoice Manager could not start</h1><p>${esc(err.message)}</p><p>Close every other Invoice Manager tab or installed-app window, then reload this page.</p><button class="btn btn-primary" id="startup-reload">Reload app</button></div></section>`;
+    document.querySelector('#startup-reload').onclick = () => location.reload();
+  }
+}
 bootstrap();
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
