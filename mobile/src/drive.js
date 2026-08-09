@@ -40,7 +40,7 @@ async function find(name, parentId, mimeType) {
   const clauses = [`name='${escapeQuery(name)}'`, 'trashed=false'];
   if (parentId) clauses.push(`'${parentId}' in parents`);
   if (mimeType) clauses.push(`mimeType='${mimeType}'`);
-  const result = await drive(`/files?q=${encodeURIComponent(clauses.join(' and '))}&fields=files(id,name,modifiedTime)`);
+  const result = await drive(`/files?q=${encodeURIComponent(clauses.join(' and '))}&fields=files(id,name,modifiedTime,webViewLink,parents)`);
   return result.files?.[0] || null;
 }
 
@@ -62,17 +62,6 @@ async function upload(name, parentId, blob, fileId = '') {
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || `Upload failed (${response.status})`);
   return response.json();
-}
-
-async function fileExists(fileId) {
-  if (!fileId) return false;
-  const response = await fetch(`${API}/files/${encodeURIComponent(fileId)}?fields=id,trashed`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (response.status === 404) return false;
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || 'Could not verify a Google Drive PDF');
-  const file = await response.json();
-  return Boolean(file.id && !file.trashed);
 }
 
 function merge(local, remote) {
@@ -101,23 +90,10 @@ export async function syncDrive(onProgress = () => {}) {
   for (const row of merged) await putInvoice(row);
   const active = merged.filter(row => !row.deleted_at);
   const missingOriginals = [];
-  let uploadedPdfs = 0;
-  let reusedPdfs = 0;
+  let createdPdfs = 0;
+  let replacedPdfs = 0;
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
-    if (invoice.drive_pdf_id) {
-      onProgress(`Verifying PDF ${index + 1} of ${active.length}…`);
-      if (await fileExists(invoice.drive_pdf_id)) {
-        if (invoice.drive_pdf_updated_at === invoice.updated_at) {
-          reusedPdfs++;
-          continue;
-        }
-      } else {
-        invoice.drive_pdf_id = '';
-        invoice.drive_pdf_url = '';
-        invoice.drive_pdf_updated_at = null;
-      }
-    }
     const original = await getOriginalPdf(invoice.id);
     const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-');
     if (!original && isHistorical) {
@@ -130,16 +106,18 @@ export async function syncDrive(onProgress = () => {}) {
     const monthFolder = await folder(new Date(Number(year) || 2000, Number(month) - 1, 1).toLocaleString('en', { month: 'long' }), yearFolder);
     const pdfBlob = original?.blob || invoicePdf(invoice);
     const name = original?.name || pdfFilename(invoice);
-    const result = await upload(name, monthFolder, pdfBlob, invoice.drive_pdf_id);
+    const matchedFile = await find(name, monthFolder);
+    const result = await upload(name, monthFolder, pdfBlob, matchedFile?.id || '');
     invoice.drive_pdf_id = result.id;
     invoice.drive_pdf_url = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
     invoice.drive_pdf_updated_at = invoice.updated_at;
     await putInvoice(invoice);
-    uploadedPdfs++;
+    if (matchedFile) replacedPdfs++;
+    else createdPdfs++;
   }
   const finalRows = await allInvoices(true);
   const dataBlob = new Blob([JSON.stringify(finalRows, null, 2)], { type: 'application/json' });
   await upload(syncName, dataFolder, dataBlob, syncFile?.id);
   const completed = new Date().toISOString(); await setSetting('last_sync', completed);
-  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed, missingOriginals, uploadedPdfs, reusedPdfs };
+  return { invoices: finalRows.filter(row => !row.deleted_at).length, completed, missingOriginals, createdPdfs, replacedPdfs };
 }
