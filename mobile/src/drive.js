@@ -56,10 +56,11 @@ async function upload(name, parentId, blob, fileId = '') {
   const boundary = `invoice_${Date.now()}`;
   const metadata = JSON.stringify({ name, ...(parentId && !fileId ? { parents: [parentId] } : {}) });
   const body = new Blob([`--${boundary}\r\nContent-Type: application/json\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: ${blob.type || 'application/octet-stream'}\r\n\r\n`, blob, `\r\n--${boundary}--`]);
-  const response = await fetch(`${UPLOAD}/${fileId || ''}?uploadType=multipart&fields=id,modifiedTime,webViewLink`, {
+  const uploadUrl = fileId ? `${UPLOAD}/${encodeURIComponent(fileId)}` : UPLOAD;
+  const response = await fetch(`${uploadUrl}?uploadType=multipart&fields=id,modifiedTime,webViewLink`, {
     method: fileId ? 'PATCH' : 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body
   });
-  if (!response.ok) throw new Error((await response.json()).error?.message || 'Upload failed');
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error?.message || `Upload failed (${response.status})`);
   return response.json();
 }
 
