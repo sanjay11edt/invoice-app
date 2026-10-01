@@ -29,6 +29,8 @@ jobs:
           cache-dependency-path: mobile/package-lock.json
       - run: npm ci
         working-directory: mobile
+      - run: npm test
+        working-directory: mobile
       - run: npm run build
         working-directory: mobile
       - uses: actions/configure-pages@v5

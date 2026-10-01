@@ -7,7 +7,7 @@ const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 let token = '';
 
-function loadGoogleIdentity() {
+export function loadGoogleIdentity() {
   if (window.google?.accounts?.oauth2) return Promise.resolve();
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');

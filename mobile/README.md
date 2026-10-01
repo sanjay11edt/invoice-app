@@ -53,3 +53,11 @@ Existing invoice data is deliberately not included in the published application 
 Invoice previews, PDF downloads, and Drive PDF uploads use the same reusable invoice layout, including existing records. The From, Bill To, and Bank Details blocks share the height of the tallest block. Previously imported PDF originals remain stored locally as reference copies.
 
 Set the sender name, address, and phone in Settings > Sender details, or import a JSON file containing `sender_name`, `sender_address`, and `sender_phone`. These private details are saved locally and included in invoice records during manual Drive sync. Existing invoice-specific sender details take precedence; the saved profile fills missing fields. No personal address or phone is bundled into the public application.
+
+## Sending invoices
+
+Use **Send Invoice** in an invoice preview, or **Save & Email** on the form. The composer includes To, CC, subject, message, and the current-format PDF attachment. Connecting Gmail does not send anything; the explicit Send Invoice action sends the reviewed message. Successful recipients are remembered by client.
+
+Enable the Gmail API in the Google Cloud project used for the existing Web OAuth Client ID, and include Gmail send permission in its OAuth consent configuration. Gmail connection requests `gmail.send` and email address access; tokens stay in memory. Desktop Flask OAuth tokens and app passwords do not transfer to GitHub Pages. If Gmail is unavailable, **Download Email Draft** exports an unsent `.eml` with the PDF attached for a compatible mail application.
+
+Implementation follows the [Gmail sending API](https://developers.google.com/workspace/gmail/api/guides/sending) and [Google Identity token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model).
