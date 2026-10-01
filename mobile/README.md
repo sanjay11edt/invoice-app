@@ -56,8 +56,14 @@ Set the sender name, address, and phone in Settings > Sender details, or import 
 
 ## Sending invoices
 
-Use **Send Invoice** in an invoice preview, or **Save & Email** on the form. The composer includes To, CC, subject, message, and the current-format PDF attachment. Connecting Gmail does not send anything; the explicit Send Invoice action sends the reviewed message. Successful recipients are remembered by client.
+Use **Send Invoice** in an invoice preview, or **Save & Email** on the form. The composer includes To, CC, subject, message, and the current-format PDF attachment. Connecting Gmail does not send anything; the explicit Send Invoice action sends the reviewed message. To and CC defaults are stored per client. Save them before the first send using Save To / CC Defaults or Settings > Invoice Email > Save Recipient Defaults.
 
 Enable the Gmail API in the Google Cloud project used for the existing Web OAuth Client ID, and include Gmail send permission in its OAuth consent configuration. Gmail connection requests `gmail.send` and email address access; tokens stay in memory. Desktop Flask OAuth tokens and app passwords do not transfer to GitHub Pages. If Gmail is unavailable, **Download Email Draft** exports an unsent `.eml` with the PDF attached for a compatible mail application.
 
 Implementation follows the [Gmail sending API](https://developers.google.com/workspace/gmail/api/guides/sending) and [Google Identity token model](https://developers.google.com/identity/oauth2/web/guides/use-token-model).
+
+## Preservation contract and private defaults
+
+Read `../CONSTITUTION.md` and `../AGENTS.md` before changing the application. Original functionality is the baseline; the constitution records protected behavior, approved targeted changes and remaining parity gaps.
+
+Under Settings > Invoice Email > Restore previous application defaults, import the private application profile prepared from the original local configuration. It restores sender details, client-specific recipient presets and email subject/body templates without replacing invoices. Profile contents are not included in the public repository. Recipient fields also travel with invoice data during manual Drive sync.

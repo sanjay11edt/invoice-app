@@ -21,3 +21,6 @@ static/*
 templates/
 README.md
 HANDOFF_PROMPT.md
+PRIVATE_BASELINE.md
+output/
+tmp/

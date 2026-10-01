@@ -12,7 +12,7 @@ test('email defaults cover all invoice periods and sender name', () => {
   const result = emailDefaults(invoice);
   assert.ok(result.body.includes('August 2026; September 2026'));
   assert.ok(result.body.includes('Example Consultant'));
-  assert.ok(result.subject.includes('2026-10'));
+  assert.equal(result.subject,'Invoice October 2026 :: Example Consultant');
 });
 
 test('MIME email preserves Unicode and includes a real PDF attachment', async () => {

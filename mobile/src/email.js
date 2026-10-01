@@ -1,10 +1,10 @@
 import { invoicePdf, pdfFilename } from './pdf.js';
 
-export const defaultSubject = 'Invoice #{invoice_number} - {sender_name}';
-export const defaultBody = 'Dear Professional,\n\nPlease find attached Invoice #{invoice_number} for the period {period}.\nKindly process the payment at your earliest convenience.\n\nLet me know if you have any questions.\n\nThank you,\n{sender_name}';
+export const defaultSubject = 'Invoice {month} :: {sender_name}';
+export const defaultBody = 'Dear Professional,\n\nI hope this email finds you well.\n\nPlease find attached Invoice #{invoice_number} for the period {period}.\nKindly process the payment at your earliest convenience.\n\nLet me know if you have any questions.\n\nThank you,\n{sender_name}';
 
 export function emailDefaults(invoice, config = {}) {
-  const values = { invoice_number: invoice.invoice_number || '', sender_name: invoice.sender_name || invoice.account_name || '', billing_name: invoice.billing_name || invoice.client || '', period: [...new Set((invoice.items || []).map(x => x.period).filter(Boolean))].join('; '), month: invoice.invoice_month || '', year: String(invoice.date || '').slice(0, 4) };
+  const values = { invoice_number: invoice.invoice_number || '', sender_name: invoice.sender_name || invoice.account_name || '', billing_name: invoice.billing_name || invoice.client || '', period: [...new Set((invoice.items || []).map(x => x.period).filter(Boolean))].join('; '), month: /^\d{4}-\d{2}-\d{2}$/.test(invoice.date || '') ? new Date(`${invoice.date}T00:00:00`).toLocaleDateString('en-US', {month:'long',year:'numeric'}) : invoice.invoice_month || '', year: String(invoice.date || '').slice(0, 4) };
   const fill = value => value.replace(/\{(\w+)\}/g, (match, key) => values[key] ?? match);
   return { subject: fill(config.default_subject || defaultSubject), body: fill(config.default_body || defaultBody) };
 }

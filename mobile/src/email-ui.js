@@ -1,7 +1,9 @@
-import { setting, setSetting } from './db.js';
+import { clientKey, recipientDefaults } from './recipients.js';
+import { importApplicationProfile } from './application-profile.js';
+import { allInvoices, setting, setSetting } from './db.js';
 import { loadGoogleIdentity } from './drive.js';
 import { pdfFilename } from './pdf.js';
-import { defaultSubject, defaultBody, emailDefaults, invoiceEmail, sendInvoiceEmail } from './email.js';
+import { defaultSubject, defaultBody, emailDefaults, invoiceEmail, recipients, sendInvoiceEmail } from './email.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const scope = 'https://www.googleapis.com/auth/gmail.send email';
@@ -9,11 +11,11 @@ const scope = 'https://www.googleapis.com/auth/gmail.send email';
 export async function openEmailComposer(invoice) {
   document.querySelector('#email-overlay')?.remove();
   const config = await setting('email_config', {});
-  const previous = await setting(`email_recipients:${invoice.client || invoice.billing_name}`, {});
+  const previous = recipientDefaults(invoice, await setting(`email_recipients:${invoice.client || invoice.billing_name}`, null), await setting('recipient_presets', {}));
   const defaults = emailDefaults(invoice, config);
   const overlay = document.createElement('div');
   overlay.id = 'email-overlay'; overlay.className = 'modal-overlay open';
-  overlay.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="email-title"><div class="modal-header"><div><h2 id="email-title">Send Invoice #${esc(invoice.invoice_number)}</h2><p class="modal-sub">PDF attached: ${esc(pdfFilename(invoice))}</p></div><button class="btn-icon" id="email-close" aria-label="Close email">×</button></div><div class="modal-body"><form id="email-form"><div class="field"><label for="email-to">To</label><input id="email-to" type="email" multiple required value="${esc(previous.to || invoice.billing_email || '')}" placeholder="client@example.com"></div><div class="field"><label for="email-cc">CC</label><input id="email-cc" type="email" multiple value="${esc(previous.cc || '')}" placeholder="Optional; separate addresses with commas"></div><div class="field"><label for="email-subject">Subject</label><input id="email-subject" required value="${esc(defaults.subject)}"></div><div class="field"><label for="email-body">Message</label><textarea id="email-body" rows="8" required>${esc(defaults.body)}</textarea></div><p id="email-status" role="status" class="setting-help">Loading Gmail sign-in…</p><div class="form-actions"><button type="button" class="btn btn-outline" id="email-connect" disabled>Connect Gmail</button><button type="submit" class="btn btn-primary" id="email-send" disabled>Send Invoice</button><button type="button" class="btn btn-outline" id="email-draft">Download Email Draft</button></div></form></div></div>`;
+  overlay.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="email-title"><div class="modal-header"><div><h2 id="email-title">Send Invoice #${esc(invoice.invoice_number)}</h2><p class="modal-sub">PDF attached: ${esc(pdfFilename(invoice))}</p></div><button class="btn-icon" id="email-close" aria-label="Close email">×</button></div><div class="modal-body"><form id="email-form"><div class="field"><label for="email-to">To</label><input id="email-to" type="email" multiple required value="${esc(previous.to)}" placeholder="client@example.com"></div><div class="field"><label for="email-cc">CC</label><input id="email-cc" type="email" multiple value="${esc(previous.cc)}" placeholder="Optional; separate addresses with commas"></div><div class="field"><label for="email-subject">Subject</label><input id="email-subject" required value="${esc(defaults.subject)}"></div><div class="field"><label for="email-body">Message</label><textarea id="email-body" rows="8" required>${esc(defaults.body)}</textarea></div><p id="email-status" role="status" class="setting-help">Loading Gmail sign-in…</p><div class="form-actions"><button type="button" class="btn btn-outline" id="email-connect" disabled>Connect Gmail</button><button type="submit" class="btn btn-primary" id="email-send" disabled>Send Invoice</button><button type="button" class="btn btn-outline" id="email-save-recipients">Save To / CC Defaults</button><button type="button" class="btn btn-outline" id="email-draft">Download Email Draft</button></div></form></div></div>`;
   document.body.appendChild(overlay);
   const get = id => overlay.querySelector(`#${id}`);
   let token = '', senderEmail = '', expiresAt = 0, sending = false;
@@ -21,7 +23,12 @@ export async function openEmailComposer(invoice) {
   get('email-close').onclick = close;
   overlay.onclick = event => { if (event.target === overlay) close(); };
   const values = () => ({ to: get('email-to').value.trim(), cc: get('email-cc').value.trim(), subject: get('email-subject').value.trim(), body: get('email-body').value, from: senderEmail });
-  const remember = async data => setSetting(`email_recipients:${invoice.client || invoice.billing_name}`, { to: data.to, cc: data.cc });
+  const remember = async data => {
+    const preset={to:recipients(data.to,true),cc:recipients(data.cc)};
+    await setSetting(`email_recipients:${invoice.client || invoice.billing_name}`,preset);
+    await setSetting('recipient_presets',{...await setting('recipient_presets',{}),[clientKey(invoice)]:preset});
+  };
+  get('email-save-recipients').onclick=async()=>{try{await remember(values());get('email-status').textContent='To and CC defaults saved for this client. No email was sent.';}catch(error){get('email-status').textContent=error.message;}};
   get('email-draft').onclick = async () => {
     if (!get('email-form').reportValidity()) return;
     try {
@@ -37,7 +44,7 @@ export async function openEmailComposer(invoice) {
     if (sending || !get('email-form').reportValidity()) return;
     if (!token || Date.now() >= expiresAt) { get('email-status').textContent = 'Connect Gmail before sending.'; get('email-send').disabled = true; return; }
     sending = true;
-    ['email-send', 'email-connect', 'email-draft', 'email-close'].forEach(id => get(id).disabled = true);
+    ['email-send', 'email-connect', 'email-draft', 'email-save-recipients', 'email-close'].forEach(id => get(id).disabled = true);
     get('email-status').textContent = 'Sending invoice with PDF attached…';
     let delivered = false;
     try {
@@ -49,7 +56,7 @@ export async function openEmailComposer(invoice) {
       try { await remember(data); } catch { /* A local preferences error must not encourage duplicate delivery. */ }
     } catch (error) { get('email-status').textContent = error.message; }
     finally {
-      sending = false; get('email-close').disabled = false; get('email-draft').disabled = false;
+      sending = false; get('email-save-recipients').disabled = false; get('email-close').disabled = false; get('email-draft').disabled = false;
       get('email-connect').disabled = delivered; get('email-send').disabled = delivered;
     }
   };
@@ -83,9 +90,27 @@ export async function openEmailComposer(invoice) {
 
 export async function mountEmailSettings(container) {
   const config = await setting('email_config', {});
+  const invoices = await allInvoices();
+  const clients = [...new Set(invoices.map(row=>row.client || row.billing_name).filter(Boolean))];
   const section = document.createElement('div'); section.className = 'form-section';
-  section.innerHTML = `<h3 class="form-section-title">Invoice Email</h3><p class="setting-help">Send Invoice is available on saved invoices. New invoices also have Save &amp; Email. Connect your Gmail account in the email composer using the Google Client ID above.</p><div class="field"><label for="email-default-subject">Default Subject</label><input id="email-default-subject" value="${esc(config.default_subject || defaultSubject)}"></div><div class="field"><label for="email-default-body">Default Message</label><textarea id="email-default-body" rows="8">${esc(config.default_body || defaultBody)}</textarea></div><p class="setting-help">Placeholders: {invoice_number}, {period}, {sender_name}, {billing_name}. Recipients are remembered separately for each client after a successful send.</p><button class="btn btn-primary" id="save-email-settings">Save Email Settings</button><p id="email-settings-status" role="status"></p>`;
+  section.innerHTML = `<h3 class="form-section-title">Invoice Email</h3><div class="field"><label for="import-application-profile">Restore previous application defaults</label><input id="import-application-profile" type="file" accept=".json,application/json"></div><p class="setting-help">Import your private application profile to restore To/CC, sender details, and email templates together.</p><div class="field"><label for="recipient-client">Client recipient defaults</label><select id="recipient-client" class="filter-select"><option value="">Select client</option>${clients.map(client=>`<option value="${esc(client)}">${esc(client)}</option>`).join('')}</select></div><div class="field"><label for="recipient-to">Default To</label><input id="recipient-to" type="email" multiple></div><div class="field"><label for="recipient-cc">Default CC</label><input id="recipient-cc" type="email" multiple></div><button class="btn btn-outline" id="save-recipient-defaults">Save Recipient Defaults</button><p class="setting-help">Send Invoice is available on saved invoices. New invoices also have Save &amp; Email. Connect your Gmail account in the email composer using the Google Client ID above.</p><div class="field"><label for="email-default-subject">Default Subject</label><input id="email-default-subject" value="${esc(config.default_subject || defaultSubject)}"></div><div class="field"><label for="email-default-body">Default Message</label><textarea id="email-default-body" rows="8">${esc(config.default_body || defaultBody)}</textarea></div><p class="setting-help">Placeholders: {invoice_number}, {period}, {sender_name}, {billing_name}. To and CC are saved separately for each client and prefilled before sending.</p><button class="btn btn-primary" id="save-email-settings">Save Email Settings</button><p id="email-settings-status" role="status"></p>`;
   container.appendChild(section);
+  section.querySelector('#import-application-profile').onchange=async event=>{
+    try{const file=event.target.files[0];if(!file)return;await importApplicationProfile(JSON.parse(await file.text()));location.reload();}
+    catch(error){section.querySelector('#email-settings-status').textContent=error.message;}
+  };
+  section.querySelector('#recipient-client').onchange=async event=>{
+    const invoice=invoices.find(row=>(row.client || row.billing_name)===event.target.value)||{};
+    const preset=recipientDefaults(invoice,await setting(`email_recipients:${event.target.value}`,null),await setting('recipient_presets',{}));
+    section.querySelector('#recipient-to').value=preset.to;section.querySelector('#recipient-cc').value=preset.cc;
+  };
+  section.querySelector('#save-recipient-defaults').onclick=async()=>{
+    try{const client=section.querySelector('#recipient-client').value;if(!client)throw Error('Select a client.');
+      const preset={to:recipients(section.querySelector('#recipient-to').value,true),cc:recipients(section.querySelector('#recipient-cc').value)};
+      await setSetting(`email_recipients:${client}`,preset);await setSetting('recipient_presets',{...await setting('recipient_presets',{}),[clientKey({client})]:preset});
+      section.querySelector('#email-settings-status').textContent='Recipient defaults saved. No email was sent.';
+    }catch(error){section.querySelector('#email-settings-status').textContent=error.message;}
+  };
   section.querySelector('#save-email-settings').onclick = async () => {
     await setSetting('email_config', { default_subject: section.querySelector('#email-default-subject').value, default_body: section.querySelector('#email-default-body').value });
     section.querySelector('#email-settings-status').textContent = 'Email settings saved.';

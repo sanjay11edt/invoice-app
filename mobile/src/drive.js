@@ -1,3 +1,4 @@
+import { clientKey } from './recipients.js';
 import { senderProfile, withSender } from './sender.js';
 import { allInvoices, putInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
@@ -106,6 +107,7 @@ export async function syncDrive(onProgress = () => {}) {
   for (const row of merged) await putInvoice(row);
   const active = merged.filter(row => !row.deleted_at);
   const profile = senderProfile(active, await setting('sender_profile', {}));
+  const recipientPresets = await setting('recipient_presets', {});
   const missingOriginals = [];
   let createdPdfs = 0;
   let replacedPdfs = 0;
@@ -120,6 +122,11 @@ export async function syncDrive(onProgress = () => {}) {
     const matchedFile = await find(name, monthFolder);
     const result = await upload(name, monthFolder, pdfBlob, matchedFile?.id || '');
     Object.assign(invoice, withSender(invoice, profile));
+    const emailPreset = recipientPresets[clientKey(invoice)];
+    if (emailPreset) {
+      if (invoice.email_to!==emailPreset.to || invoice.email_cc!==emailPreset.cc) invoice.updated_at=new Date().toISOString();
+      invoice.email_to=emailPreset.to; invoice.email_cc=emailPreset.cc;
+    }
     invoice.drive_pdf_id = result.id;
     invoice.drive_pdf_url = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
     invoice.drive_pdf_updated_at = invoice.updated_at;
