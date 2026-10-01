@@ -1,4 +1,5 @@
-import { allInvoices, getOriginalPdf, putInvoice, setting, setSetting } from './db.js';
+import { senderProfile, withSender } from './sender.js';
+import { allInvoices, putInvoice, setting, setSetting } from './db.js';
 import { invoicePdf, pdfFilename } from './pdf.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
@@ -104,25 +105,21 @@ export async function syncDrive(onProgress = () => {}) {
   const merged = merge(await allInvoices(true), remote);
   for (const row of merged) await putInvoice(row);
   const active = merged.filter(row => !row.deleted_at);
+  const profile = senderProfile(active, await setting('sender_profile', {}));
   const missingOriginals = [];
   let createdPdfs = 0;
   let replacedPdfs = 0;
   for (let index = 0; index < active.length; index++) {
     const invoice = active[index];
-    const original = await getOriginalPdf(invoice.id);
-    const isHistorical = invoice.source === 'legacy' || String(invoice.id).startsWith('legacy-') || Boolean(invoice.path) || /\.xlsx$/i.test(invoice.file || '');
-    if (!original && isHistorical) {
-      missingOriginals.push(invoice.id);
-      continue;
-    }
     onProgress(`Uploading PDF ${index + 1} of ${active.length}…`);
     const [year, month = '01'] = String(invoice.invoice_month || invoice.date || '').split('-');
     const yearFolder = await folder(year || 'Unknown', invoicesFolder);
     const monthFolder = await folder(new Date(Number(year) || 2000, Number(month) - 1, 1).toLocaleString('en', { month: 'long' }), yearFolder);
-    const pdfBlob = original?.blob || invoicePdf(invoice);
-    const name = original?.name || pdfFilename(invoice);
+    const pdfBlob = invoicePdf(withSender(invoice, profile));
+    const name = pdfFilename(invoice);
     const matchedFile = await find(name, monthFolder);
     const result = await upload(name, monthFolder, pdfBlob, matchedFile?.id || '');
+    Object.assign(invoice, withSender(invoice, profile));
     invoice.drive_pdf_id = result.id;
     invoice.drive_pdf_url = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
     invoice.drive_pdf_updated_at = invoice.updated_at;

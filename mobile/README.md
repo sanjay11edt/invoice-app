@@ -47,3 +47,9 @@ Existing invoice data is deliberately not included in the published application 
 - Deletions are synchronized as tombstones, preventing old devices from restoring deleted invoices.
 - PDFs are uploaded again only when their invoice changes.
 - Deleting an invoice does not automatically delete its Drive PDF.
+
+## Invoice format and sender details
+
+Invoice previews, PDF downloads, and Drive PDF uploads use the same reusable invoice layout, including existing records. The From, Bill To, and Bank Details blocks share the height of the tallest block. Previously imported PDF originals remain stored locally as reference copies.
+
+Set the sender name, address, and phone in Settings > Sender details, or import a JSON file containing `sender_name`, `sender_address`, and `sender_phone`. These private details are saved locally and included in invoice records during manual Drive sync. Existing invoice-specific sender details take precedence; the saved profile fills missing fields. No personal address or phone is bundled into the public application.

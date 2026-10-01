@@ -65,7 +65,7 @@ export function invoiceDocument(invoice) {
   const infoHeight = Math.max(...heights);
   blocks.forEach(([title], index) => {
     const x = margin + 2.8 + index * blockWidth;
-    box(x, y, blockWidth, heights[index], colors.light, true); box(x, y, blockWidth, 5.65, colors.accent);
+    box(x, y, blockWidth, infoHeight, colors.light, true); box(x, y, blockWidth, 5.65, colors.accent);
     font(7, true, colors.white); text(title, x + 2.1, y + 4.3);
     font(); let baseline = y + 10; lines[index].forEach(row => { row.forEach(line => { text(line, x + 2.1, baseline); baseline += 4.2; }); baseline += 2.47; });
   });
