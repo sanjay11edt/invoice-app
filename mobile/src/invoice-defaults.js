@@ -1,4 +1,4 @@
-const fields = ['client', 'billing_name', 'billing_address', 'billing_phone', 'bank', 'account_name', 'account_number', 'ifsc'];
+const fields = ['client', 'billing_name', 'billing_address', 'billing_phone', 'bank', 'account_name', 'account_number', 'ifsc', 'sender_name', 'sender_address', 'sender_phone'];
 const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 export const monthValue = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`;
 
